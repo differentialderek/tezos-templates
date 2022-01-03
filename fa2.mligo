@@ -1,20 +1,25 @@
-(* An FA2 contract for carbon tokens *)
+(* A generic FA2 contract *)
 (* FA2 Proposal TZIP: https://gitlab.com/tezos/tzip/-/blob/master/proposals/tzip-12/tzip-12.md *)
 (* FA2 Standard: https://tezos.b9lab.com/fa2 *)
 
+// TODO : Contract views for balances and metadata 
+// TODO : How to perform an operation on something in a big map?
 
 (* =============================================================================
  * Storage
  * ============================================================================= *)
 
-type fa2_token_id = nat
-type fa2_amt = nat
-type fa2_owner = address
-type fa2_operator = address
-type token_metadata = [@layout:comb]{
-    token_id : nat ; 
-    token_info : (string, bytes) map ;
+type token_id = nat
+type qty = nat
+
+type owner = [@layout:comb] { token_owner : address ; token_id : nat ; }
+type operator = [@layout:comb] {
+    token_owner : address ; 
+    token_operator : address ; 
+    token_id : nat ;
 }
+
+type token_metadata = [@layout:comb]{ token_id : nat ; token_info : (string, bytes) map ; }
 type contract_metadata = (string, bytes) big_map
 
 type storage = {
@@ -22,16 +27,16 @@ type storage = {
     admin : address ; 
 
     // the ledger keeps track of who owns what token
-    ledger : (fa2_owner * fa2_token_id , fa2_amt) big_map ; 
+    ledger : (owner , qty) big_map ; 
     
     // an operator can trade tokens on behalf of the fa2_owner
     // if the key (owner, operator, token_id) returns some k : nat, this denotes that the operator has (one-time?) permissions to operate k tokens
     // if there is no entry, the operator has no permissions
-    // such permissions need to granted, e.g. for the burn entrypoint in the carbon contract
-    operators : (fa2_owner * fa2_operator * fa2_token_id, nat) big_map;
+    // such permissions need to granted, e.g. for the burn entrypoint in the admin
+    operators : (operator, nat) big_map;
     
     // token metadata for each token type supported by this contract
-    token_metadata : (fa2_token_id, token_metadata) big_map;
+    token_metadata : (token_id, token_metadata) big_map;
     // contract metadata 
     metadata : (string, bytes) big_map;
 }
@@ -43,18 +48,11 @@ type result = (operation list) * storage
  * Entrypoint Type Definition
  * ============================================================================= *)
 type transfer_to = [@layout:comb]{ to_ : address ; token_id : nat ; amount : nat ; }
-type transfer = 
-    [@layout:comb]
-    { from_ : address; 
-      txs : transfer_to list; }
+type transfer = [@layout:comb] { from_ : address; txs : transfer_to list; }
 
-type requests = [@layout:comb]{ owner : address ; token_id : nat ; }
-type request = [@layout:comb]{ owner : address ; token_id : nat ; }
+type request = [@layout:comb]{ token_owner : address ; token_id : nat ; }
 type callback_data = [@layout:comb]{ request : request ; balance : nat ; }
-type balance_of = [@layout:comb]{
-    requests : requests list ; 
-    callback : callback_data list contract ;
-}
+type balance_of = [@layout:comb]{ requests : request list ; callback : callback_data list contract ; }
 
 type operator_data = [@layout:comb]{ owner : address ; operator : address ; token_id : nat ; qty : nat ; }
 type update_operator = 
@@ -103,100 +101,82 @@ let error_COLLISION = 12n // A collision in storage
  * Aux Functions
  * ============================================================================= *)
 
-// an auxiliary function for querying an address's balance
-let rec owner_and_id_to_balance (param : (callback_data list) * (requests list) * ((fa2_owner * fa2_token_id , fa2_amt) big_map)) : callback_data list =
-    let (accumulator, request_list, ledger) = param in
-    match request_list with
-    | [] -> accumulator 
-    | h :: t -> 
-        let owner = h.owner in 
-        let token_id = h.token_id in
-        let qty =
-            match Big_map.find_opt (owner, token_id) ledger with 
-            | None -> 0n
-            | Some owner_balance -> owner_balance in
-        let request = { owner = owner ; token_id = token_id ; } in
-        let accumulator = { request = request ; balance = qty ; } :: accumulator in
-        owner_and_id_to_balance (accumulator, t, ledger) 
-
-
 (* =============================================================================
  * Entrypoint Functions
  * ============================================================================= *)
 
 // The transfer entrypoint function
-// The input type is a tuple: (sender, list_of_transfers) where the first entry corresponds 
-//    to the sender ("from"), and the second is a list with transfer data.
-// This list of transfers has entries of the form (receiver, token_id, amount) = (address * nat * nat)
 // The transfer function creates a list of transfer operations recursively
-let rec transfer_txn (param , storage : transfer * storage) : storage = 
+let rec execute_transfer (param , storage : transfer * storage) : storage = 
     match param.txs with
     | [] -> storage
     | hd :: tl ->
-        let (from, to, token_id, qty) = (param.from_, hd.to_, hd.token_id, hd.amount) in 
-        // check permissions
-        let operator = Tezos.sender in 
+        let (from, to, token_id, qty, operator) = (param.from_, hd.to_, hd.token_id, hd.amount, Tezos.sender) in 
         let owner = from in 
-        let operator_permissions = 
-            match Big_map.find_opt (owner, operator, token_id) storage.operators with 
-            | None -> 0n
-            | Some allowed_qty -> allowed_qty in 
-        if ((Tezos.sender <> from) && (operator_permissions < qty)) then (failwith error_FA2_NOT_OPERATOR : storage) else 
         // update operator permissions to reflect this transfer
         let operators = 
             if Tezos.sender <> from // thus this is an operator
-            then Big_map.update (owner, operator, token_id) (Some (abs (operator_permissions - qty))) storage.operators
+            then 
+                let allowed_qty = 
+                    match Big_map.find_opt {token_owner = owner; token_operator = operator; token_id = token_id ;} storage.operators with 
+                    | None -> 0n | Some q -> q in 
+                // failw if operator does not have permissions 
+                if allowed_qty < qty then (failwith error_FA2_NOT_OPERATOR : (operator, nat) big_map) else 
+                Big_map.update {token_owner = owner; token_operator = operator; token_id = token_id ;} (Some (abs (allowed_qty - qty))) storage.operators
             else storage.operators in
-        // check balance
-        let sender_token_balance =
-            match Big_map.find_opt (from, token_id) storage.ledger with
-            | None -> 0n
-            | Some token_balance -> token_balance in
-        let recipient_balance = 
-            match Big_map.find_opt (to, token_id) storage.ledger with
-            | None -> 0n
-            | Some recipient_token_balance -> recipient_token_balance in
-        if (sender_token_balance < qty) then (failwith error_FA2_INSUFFICIENT_BALANCE : storage) else
         // update the ledger
         let ledger = 
+            // check balances 
+            let sender_token_balance =
+                match Big_map.find_opt {token_owner = from; token_id = token_id ;} storage.ledger with | None -> 0n | Some b -> b in
+            let recipient_balance = 
+                match Big_map.find_opt {token_owner = to; token_id = token_id ;} storage.ledger with | None -> 0n | Some b -> b in
+            // ensure sufficient funds 
+            if (sender_token_balance < qty) then (failwith error_FA2_INSUFFICIENT_BALANCE : (owner, qty) big_map) else
+            // update the ledger 
             Big_map.update
-            (to, token_id)
+            { token_owner = to ; token_id = token_id ; }
             (Some (recipient_balance + qty))
                 (Big_map.update 
-                 (from, token_id) 
+                 {token_owner = from; token_id = token_id ;}
                  (Some (abs (sender_token_balance - qty))) 
                  storage.ledger) in 
-        let storage = {storage with ledger = ledger ; operators = operators ; } in
-        let param = { from_ = from ; txs = tl ; } in 
-        transfer_txn (param, storage)
+        // recurse with the same from_ address
+        execute_transfer (
+            { from_ = from ; txs = tl ; }, 
+            { storage with ledger = ledger ; operators = operators ; }
+        )
 
 let rec transfer (param, storage : transfer list * storage) : result = 
     match param with 
     | [] -> (([] : operation list), storage)
     | hd :: tl -> 
-        let storage = transfer_txn (hd, storage) in 
+        let storage = execute_transfer (hd, storage) in 
         transfer (tl, storage)
 
+
 // the entrypoint to query balance 
-// input balance_of is a tuple:
-//   * the first entry is a list of the form (owner, token_id) list which queries the balance of owner in the given token id
-//   * the second entry is a contract that can receive the list of balances. This list is of the form 
-//     (owner, token_id, amount) list = (address * nat * nat) list
-//     An example of such a contract is in tests/test-fa2.mligo 
 let balance_of (param : balance_of) (storage : storage) : result = 
     let (request_list, callback) = (param.requests, param.callback) in 
-    let accumulator = ([] : callback_data list) in
-    let ack_list = owner_and_id_to_balance (accumulator, request_list, storage.ledger) in
-    let t = Tezos.transaction ack_list 0mutez callback in
-    ([t], storage)
+    let op_balanceOf = 
+        Tezos.transaction 
+        (
+            List.map 
+            (
+                fun (r : request) ->  
+                { request = r ; 
+                  balance = 
+                    match Big_map.find_opt r storage.ledger with | None -> 0n | Some b -> b ; } 
+            )
+            request_list 
+        )
+        0mutez 
+        callback in
+    ([op_balanceOf], storage)
 
 
 // The entrypoint where fa2_owner adds or removes fa2_operator from storage.operators
-// * The input is a triple: (owner, operator, id) : address * address * nat
-//   This triple is tagged either as Add_operator or Remove_operator
-// * Only the token owner can add or remove operators
-// * An operator can perform transactions on behalf of the owner
-let update_operator (param : update_operator) (storage : storage) : storage = 
+let update_operator (storage, param : storage * update_operator) : storage = 
     match param with
     | Add_operator o ->
         let (owner, operator, token_id, qty) = (o.owner, o.operator, o.token_id, o.qty) in 
@@ -204,57 +184,47 @@ let update_operator (param : update_operator) (storage : storage) : storage =
         if (Tezos.source <> owner) then (failwith error_PERMISSIONS_DENIED : storage) else
         if operator = owner then (failwith error_COLLISION : storage) else // an owner can't be their own operator 
         // update storage
-        let new_qty = 
-            let old_qty = 
-             match Big_map.find_opt (owner, operator, token_id) storage.operators with 
-             | None -> 0n 
-             | Some q -> q in 
-            old_qty + qty in 
-        let storage = {storage with 
-            operators = Big_map.update (owner, operator, token_id) (Some new_qty) storage.operators ; } in 
-        storage
+        {storage with operators = 
+            let new_qty = 
+                let old_qty = 
+                    match Big_map.find_opt {token_owner = owner; token_operator = operator; token_id = token_id ;} storage.operators with 
+                    | None -> 0n 
+                    | Some q -> q in 
+                old_qty + qty in 
+            Big_map.update {token_owner = owner; token_operator = operator; token_id = token_id ;} (Some new_qty) storage.operators ; }
     | Remove_operator o ->
         let (owner, operator, token_id) = (o.owner, o.operator, o.token_id) in 
         // check permissions
-        if (Tezos.sender <> owner) then (failwith error_PERMISSIONS_DENIED : storage) else
+        if (Tezos.source <> owner) then (failwith error_PERMISSIONS_DENIED : storage) else
         // update storage
-        let storage = {storage with 
-            operators = Big_map.update (owner,operator,token_id) (None : nat option) storage.operators ; } in 
-        storage
-
+        {storage with 
+            operators = Big_map.update {token_owner = owner; token_operator = operator; token_id = token_id ;} (None : nat option) storage.operators ; }
+        
 let rec update_operators (param, storage : update_operators * storage) : result = 
-    match param with
-    | [] -> (([] : operation list), storage)
-    | hd :: tl -> 
-        let storage = update_operator hd storage in 
-        update_operators (tl, storage)
+    ([] : operation list),
+    List.fold update_operator param storage 
 
-// only the carbon contract can mint tokens
-// This entrypoint can only be called by the carbon contract
+// This entrypoint can only be called by the admin
 let rec mint_tokens (param, storage : mintburn * storage) : result =
+    // check permissions 
+    if Tezos.sender <> storage.admin then (failwith error_PERMISSIONS_DENIED : result) else 
+    // mint tokens 
     let minting_list = param in
     match minting_list with 
     | [] -> (([] : operation list), storage)
     | hd :: tl -> 
-        let owner = hd.owner in 
-        let token_id = hd.token_id in 
-        let qty = hd.qty in 
-        // check operator
-        if Tezos.sender <> storage.carbon_contract then (failwith error_PERMISSIONS_DENIED : result) else 
-        // update owner balance
-        let owner_balance = 
-            match Big_map.find_opt (owner, token_id) storage.ledger with
-            | None -> 0n + qty
-            | Some ownerPrevBalance -> ownerPrevBalance + qty in
-        let storage = {storage with 
-            ledger = Big_map.update (owner, token_id) (Some owner_balance) storage.ledger ; } in 
+        let storage = {storage with ledger = 
+            let (owner, token_id, qty) = (hd.owner, hd.token_id, hd.qty) in 
+            // update owner balance
+            let owner_balance = 
+                match Big_map.find_opt {token_owner = owner; token_id = token_id ;} storage.ledger with
+                | None -> 0n + qty
+                | Some ownerPrevBalance -> ownerPrevBalance + qty in
+            Big_map.update {token_owner = owner; token_id = token_id ;} (Some owner_balance) storage.ledger ; } in 
         mint_tokens (tl, storage)
 
-// only the carbon contract can burn tokens
-// Like minting, this entrypoint can only be called by the carbon contract
-let burn_tokens (param : mintburn) (storage : storage) : transfer = 
-    // check permissions
-    if Tezos.sender <> storage.carbon_contract then (failwith error_PERMISSIONS_DENIED : transfer) else 
+// this is the burn function, which is a transfer function to the burn address 
+let burn_tokens (param : mintburn) : transfer = 
     let burn_addr = ("tz1Ke2h7sDdakHJQh8WX4Z372du1KChsksyU" : address) in // standard burn address 
     let from = Tezos.source in 
     // transfer the tokens to the burn address
@@ -272,43 +242,41 @@ let burn_tokens (param : mintburn) (storage : storage) : transfer =
     }
 
 // The entrypoint to query token metadata
-// The input is a tuple: (query_list, callback_contract)
-//   * The query list is of token ids and has type `nat list`
-//   * The callback contract must have type ((fa2_token_id * token_metadata) list contract)
 let get_metadata (param : get_metadata) (storage : storage) : result = 
-    let query_list = param.token_ids in 
-    let callback = param.callback in 
-    let metadata_list = 
-        List.map 
-        (fun (token_id : nat) : token_metadata -> 
-            match Big_map.find_opt token_id storage.token_metadata with 
-            | None -> (failwith error_FA2_TOKEN_UNDEFINED : token_metadata) 
-            | Some m -> {token_id = token_id ; token_info = m.token_info ; })
-        query_list in 
-    let op_metadata = Tezos.transaction metadata_list 0tez callback in 
+    let (query, callback) = (param.token_ids, param.callback) in 
+    let op_metadata = 
+        Tezos.transaction
+        (
+            List.map 
+            (fun (token_id : nat) : token_metadata -> 
+                match Big_map.find_opt token_id storage.token_metadata with 
+                | None -> (failwith error_FA2_TOKEN_UNDEFINED : token_metadata) 
+                | Some m -> {token_id = token_id ; token_info = m.token_info ; })
+            query
+        )
+        0tez 
+        callback in 
     ([op_metadata] , storage)
 
-// This entrypoint allows project owners to add zones (token ids) to their project
-// This transaction has to come from the carbon contract, which has a set of preapproval rules 
-// governing this process
+// This entrypoint allows the admin to add token ids to their contract
 // If there is a collision on token ids, this entrypoint will return a failwith
 let add_token_id (param : token_metadata list) (storage : storage) : result = 
-    if Tezos.sender <> storage.owner then (failwith error_PERMISSIONS_DENIED : result) else
+    if Tezos.sender <> storage.admin then (failwith error_PERMISSIONS_DENIED : result) else
     let storage = 
         List.fold_left
         (fun (s, d : storage * token_metadata) -> 
             { s with token_metadata = 
                 match Big_map.get_and_update d.token_id (Some d) s.token_metadata with
                 | (None, m) -> m
-                | (Some _, m) -> (failwith error_COLLISION : (fa2_token_id, token_metadata) big_map) } )
+                | (Some _, m) -> (failwith error_COLLISION : (token_id, token_metadata) big_map) } )
         storage
         param in 
     ([] : operation list), storage
 
 
-// this entrypoint allows a project owner to update the metadata for their project
+// this entrypoint allows the admin to update the contract metadata
 let update_contract_metadata (param : contract_metadata) (storage : storage) : result = 
-    if Tezos.sender <> storage.owner then (failwith error_PERMISSIONS_DENIED : result) else
+    if Tezos.sender <> storage.admin then (failwith error_PERMISSIONS_DENIED : result) else
     ([] : operation list),
     { storage with metadata = param }
 
@@ -328,7 +296,7 @@ let rec main ((entrypoint, storage) : entrypoint * storage) : result =
     | Mint param -> 
         mint_tokens (param, storage)
     | Burn param ->
-        main (Transfer( [burn_tokens param storage] ), storage)
+        main ( Transfer([burn_tokens param]), storage )
     | Get_metadata param ->
         get_metadata param storage
     | Add_token_id param ->
