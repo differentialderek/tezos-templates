@@ -1,3 +1,3 @@
-# Tezos Boilerplate
+# Tezos Templates
 
 This is a repository for some contract templates 
