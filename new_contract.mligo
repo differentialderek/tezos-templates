@@ -42,7 +42,7 @@ let error_PERMISSIONS_DENIED = 0n
  * Contract Views
  * ============================================================================= *)
 
-// [@view] view1 (input : input) : output = ...
+// [@view] viewName (input : input) : output = ...
 
 (* =============================================================================
  * Main Function
