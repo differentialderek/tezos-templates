@@ -22,6 +22,11 @@ type operator = [@layout:comb] {
 type token_metadata = [@layout:comb]{ token_id : nat ; token_info : (string, bytes) map ; }
 type contract_metadata = (string, bytes) big_map
 
+type add_token_id = {
+    exchange_rate : nat ;
+    token_metadata : token_metadata ;
+}
+
 type storage = {
     // governance 
     governance : address ; 
@@ -88,7 +93,7 @@ type entrypoint =
 | Mint of mint // mint tokens
 | Burn of burn // burn tokens 
 | Get_metadata of get_metadata // query the metadata of a given token
-| Add_token_id of token_metadata list 
+| Add_token_id of add_token_id list 
 | Update_contract_metadata of contract_metadata
 // pooling functionality
 | TradeInPool of trade_in_pool
@@ -278,15 +283,22 @@ let get_metadata (param : get_metadata) (storage : storage) : result =
 
 // This entrypoint allows governance to add token ids to their contract
 // If there is a collision on token ids, this entrypoint will return a failwith
-let add_token_id (param : token_metadata list) (storage : storage) : result = 
+let add_token_id (param : add_token_id list) (storage : storage) : result = 
     if Tezos.sender <> storage.governance then (failwith error_PERMISSIONS_DENIED : result) else
     let storage = 
         List.fold_left
-        (fun (s, d : storage * token_metadata) -> 
-            { s with token_metadata = 
-                match Big_map.get_and_update d.token_id (Some d) s.token_metadata with
-                | (None, m) -> m
-                | (Some _, m) -> (failwith error_COLLISION : (token_id, token_metadata) big_map) } )
+        (fun (s, p : storage * add_token_id) -> 
+            let (r, d) = (p.exchange_rate, p.token_metadata) in 
+            { s with 
+                token_metadata = 
+                    match Big_map.get_and_update d.token_id (Some d) s.token_metadata with
+                    | (None, m) -> m
+                    | (Some _, m) -> (failwith error_COLLISION : (token_id, token_metadata) big_map) ; 
+                exchange_rates = 
+                    match Big_map.get_and_update d.token_id (Some r) s.exchange_rates with 
+                    | (None, m) -> m
+                    | (Some _, m) -> (failwith error_COLLISION : (nat, nat) big_map) ; 
+                } )
         storage
         param in 
     ([] : operation list), storage
