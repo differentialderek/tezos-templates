@@ -18,4 +18,5 @@ This token contract allows users to burn their tokens in exchange for tokens in 
 
 ## Future work
 
-An update to this will come so that the internal exchange rate can change over time to meet supply/demand
+- An update to this will come so that the internal exchange rate can change over time to meet supply/demand
+- These are just implementations, so an actual standard would have to be written 
