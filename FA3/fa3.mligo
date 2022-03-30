@@ -368,6 +368,14 @@ let unpool (param : unpool) (storage : storage) : result =
 
 let trade_in_pool (param : trade_in_pool) (storage : storage) : result = 
     let (qty, token_in, token_out) = (param.qty, param.token_in, param.token_out) in 
+    let rate_in = 
+        match Big_map.find_opt token_in storage.exchange_rates with 
+        | None -> (failwith error_FA2_TOKEN_UNDEFINED : nat)
+        | Some rate -> rate in 
+    let rate_out = 
+        match Big_map.find_opt token_in storage.exchange_rates with 
+        | None -> (failwith error_FA2_TOKEN_UNDEFINED : nat)
+        | Some rate -> rate in 
     // burn 
     let op_transfer_in = 
         match (Tezos.get_entrypoint_opt "%transfer" Tezos.self_address : transfer contract option) with 
@@ -382,13 +390,10 @@ let trade_in_pool (param : trade_in_pool) (storage : storage) : result =
         match (Tezos.get_entrypoint_opt "%transfer" Tezos.self_address : transfer contract option) with 
         | None -> (failwith error_FA2_SENDER_HOOK_FAILED : operation)
         | Some entrypt -> (
-            match Big_map.find_opt token_out storage.exchange_rates with 
-            | None -> (failwith error_FA2_TOKEN_UNDEFINED : operation)
-            | Some rate -> (
-                let txn_data = 
-                    let transfer_to = { to_ = Tezos.self_address ; token_id = token_out ; amount = qty * 1_000n / rate ; } in 
-                        { from_ = Tezos.sender ; txs = [ transfer_to ; ] ; } in 
-                Tezos.transaction txn_data 0tez entrypt ) ) in 
+            let txn_data = 
+                let transfer_to = { to_ = Tezos.self_address ; token_id = token_out ; amount = qty * rate_in / rate_out ; } in 
+                    { from_ = Tezos.sender ; txs = [ transfer_to ; ] ; } in 
+            Tezos.transaction txn_data 0tez entrypt ) in 
     [ op_transfer_in ; op_transfer_out ; ],
     storage 
         

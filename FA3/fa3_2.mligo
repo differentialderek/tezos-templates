@@ -305,35 +305,35 @@ let update_contract_metadata (param : contract_metadata) (storage : storage) : r
 
 let trade_in_pool (param : trade_in_pool) (storage : storage) : result = 
     let (qty, token_in, token_out) = (param.qty, param.token_in, param.token_out) in 
+    let rate_in = 
+        match Big_map.find_opt token_in storage.exchange_rates with 
+        | None -> (failwith error_FA2_TOKEN_UNDEFINED : nat)
+        | Some rate -> rate in 
+    let rate_out = 
+        match Big_map.find_opt token_in storage.exchange_rates with 
+        | None -> (failwith error_FA2_TOKEN_UNDEFINED : nat)
+        | Some rate -> rate in 
     // burn 
     let op_burn_in = 
         match (Tezos.get_entrypoint_opt "%burn" Tezos.self_address : burn contract option) with 
         | None -> (failwith error_FA2_SENDER_HOOK_FAILED : operation)
         | Some entrypt -> (
-            match Big_map.find_opt token_in storage.exchange_rates with 
-            | None -> (failwith error_FA2_TOKEN_UNDEFINED : operation)
-            | Some rate -> (
-                let txn_data = {
-                    owner = Tezos.sender ; 
-                    token_id = token_in ; 
-                    qty = qty * rate / 1_000n ; } in 
-                Tezos.transaction [ txn_data ; ] 0tez entrypt
-            )
+            let txn_data = {
+                owner = Tezos.sender ; 
+                token_id = token_in ; 
+                qty = qty ; } in 
+            Tezos.transaction [ txn_data ; ] 0tez entrypt
         ) in     
     // mint 
     let op_mint_out = 
         match (Tezos.get_entrypoint_opt "%mint" Tezos.self_address : mint contract option) with 
         | None -> (failwith error_FA2_SENDER_HOOK_FAILED : operation)
         | Some entrypt -> (
-            match Big_map.find_opt token_in storage.exchange_rates with 
-            | None -> (failwith error_FA2_TOKEN_UNDEFINED : operation)
-            | Some rate -> (
-                let txn_data = {
-                    owner = Tezos.self_address ; 
-                    token_id = token_out ; 
-                    qty = qty * 1_000n / rate ; } in 
-                Tezos.transaction [ txn_data ; ] 0tez entrypt
-            )
+            let txn_data = {
+                owner = Tezos.self_address ; 
+                token_id = token_out ; 
+                qty = qty * rate_in / rate_out ; } in 
+            Tezos.transaction [ txn_data ; ] 0tez entrypt
         ) in 
     [ op_burn_in ; op_mint_out ; ],
     storage 
