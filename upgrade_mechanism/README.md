@@ -15,3 +15,5 @@ If you want to upgrade storage types, you need a function in `old_storage_type -
 This can be done with big maps too, and the keys can be upgraded. As long as you have a function from `new_key_type -> old_key_type` and a function from `old_value_type -> new_value_type`, then you can lazily port over data from the old smart contract's big map into the new.
 
 This is a WIP. Further documentation and examples will be coming (hopefully soon).
+
+[See more documentation at this HackMD doc.](https://hackmd.io/@durlicc/r16q6D1Zq)
