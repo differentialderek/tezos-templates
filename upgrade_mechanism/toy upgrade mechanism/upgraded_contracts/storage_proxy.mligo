@@ -94,7 +94,7 @@ let activate (b : bool) (storage : storage) : result =
 let main (param, storage : entrypoint * storage) : result = 
     match param with 
     | UpdateStorage n -> update_storage n storage
-    | FetchStorage _ -> fetch_storage storage
+    | FetchStorage -> fetch_storage storage
     | Activate n -> activate n storage
 
 

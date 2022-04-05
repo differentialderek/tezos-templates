@@ -19,6 +19,10 @@ type update_proxy =
 | NewProxy of new_proxy
 | RemoveProxy of remove_proxy
 
+type disburse_funds = {
+    to_ : address ; 
+    amt_ : tez ; 
+} 
 type add_governor = {
     new_governor : address ;
     new_quorum : nat ;
@@ -29,6 +33,7 @@ type remove_governor = {
 }
 type proposed_txn = 
 | UpdateProxy of update_proxy 
+| DisburseFunds of disburse_funds
 | IncomingGovernor of add_governor 
 | OutgoingGovernor of remove_governor
 
@@ -160,6 +165,10 @@ let rec execute_proposed_txns (proposal, acc, directory : proposal * (operation 
             match (Tezos.get_entrypoint_opt "%updateProxy" directory : update_proxy contract option) with
             | None -> (failwith error_NOT_FOUND : operation list)
             | Some contract_addr -> execute_proposed_txns (tl, Tezos.transaction update_proxy 0tez contract_addr :: acc, directory) )
+        | DisburseFunds disburse_funds -> (
+            match (Tezos.get_entrypoint_opt "%disburseFunds" directory : disburse_funds contract option) with
+            | None -> (failwith error_NOT_FOUND : operation list)
+            | Some contract_addr -> execute_proposed_txns (tl, Tezos.transaction disburse_funds 0tez contract_addr :: acc, directory) )
         | IncomingGovernor incoming_governor -> (
             match (Tezos.get_entrypoint_opt "%addGovernor" Tezos.self_address : add_governor contract option) with
             | None -> (failwith error_NOT_FOUND : operation list)

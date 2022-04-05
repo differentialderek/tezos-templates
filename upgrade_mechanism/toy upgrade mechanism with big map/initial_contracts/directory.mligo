@@ -25,11 +25,15 @@ type existing_proxy = {
     proxy_name : string ;
     new_proxy_addr : address ; }
 type remove_proxy = string 
+type disburse_funds = {
+    to_ : address ; 
+    amt_ : tez ; } 
 
 type entrypoint = 
 | AddNewProxy of new_proxy
 | UpdateExistingProxy of existing_proxy
 | RemoveProxy of remove_proxy
+| DisburseFunds of disburse_funds
 
 
 (* =============================================================================
@@ -39,6 +43,7 @@ type entrypoint =
 let error_PERMISSIONS_DENIED = 0n
 let error_NO_PROXY_FOUND = 1n
 let error_COLLISION = 2n
+let error_NO_ADDRESS_FOUND = 3n
 
 (* =============================================================================
  * Aux Functions
@@ -151,6 +156,17 @@ let remove_proxy (p : remove_proxy) (storage : storage) : result =
         storage
     )        
 
+let disburse_funds (p : disburse_funds) (storage : storage) : result = 
+    let (to_, amt_) = (p.to_, p.amt_) in 
+    // check it's coming from a proxy address
+    if not is_proxy_addr Tezos.sender storage.proxy_addresses_unit then (failwith error_PERMISSIONS_DENIED : result) else
+    // disburse funds 
+    match (Tezos.get_contract_opt to_ : unit contract option) with 
+    | None -> (failwith error_NO_ADDRESS_FOUND : result)
+    | Some addr_contract -> 
+        [ Tezos.transaction () amt_ addr_contract ; ],
+        storage
+
 (* =============================================================================
  * Contract Views
  * ============================================================================= *)
@@ -175,3 +191,5 @@ let main (param, storage : entrypoint * storage) : result =
         update_existing_proxy p storage
     | RemoveProxy p ->
         remove_proxy p storage
+    | DisburseFunds p ->
+        disburse_funds p storage
