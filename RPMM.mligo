@@ -1,6 +1,15 @@
 // The RPMM contract for pooling tokens
 
 (* =============================================================================
+ * Conditionals
+ * ============================================================================= *)
+
+(* If the RPMM has minting/burning rights on all tokens in the directory and allows
+   for synthetic trades *)
+//#define SYNTHETIC_TRADES
+
+
+(* =============================================================================
  * Storage
  * ============================================================================= *)
 
@@ -9,10 +18,13 @@ type exchange_rate = nat // always divided by 1_000_000n in the code
 
 type storage = {
     directory : (token, exchange_rate) big_map ; 
-    pool_token : token ; 
-    unpool_fee : nat ;
+    pool_token : token ; // this contract must have minting/burning rights 
+    unpool_fee : nat ; // could be 0n if not worried about arbitrage
     increment : nat ; // the slippage on each trade, divided by 1_000_000n; could be 0n for static exchange rates
     min_rate : int ; // the minimum exchange rate allowed by the RPMM; could be 0
+#if SYNTHETIC_TRADES
+    synth_trade_fee : nat ; // the fee to make a synthetic trade
+#endif
 }
 
 type result = operation list * storage 
@@ -52,6 +64,9 @@ type entrypoint =
 | Pool of pool
 | Unpool of unpool 
 | Trade of trade 
+#if SYNTHETIC_TRADES
+| SyntheticTrade of trade
+#endif
 
 (* =============================================================================
  * Error Codes
@@ -177,8 +192,51 @@ let trade (p : trade) (storage : storage) : result =
     [ op_transfer_in ; op_transfer_out ; ], 
     { storage with directory = directory ; }
 
-//TODO :
-//let synthetic_trade (p : synthetic_trade) (storage : storage) : result = ...
+#if SYNTHETIC_TRADES
+let synthetic_trade (p : synthetic_trade) (storage : storage) : result = ...
+    // check synth trade fee is being paid
+    if Tezos.amount <> storage.synth_trade_fee * 1mutez then (failwith error_INSUFFICIENT_FUNDS : result) else
+    // get exchange rate 
+    let rate_in = 
+        match Big_map.find_opt p.token_in storage.directory with 
+        | None -> (failwith error_TOKEN_NOT_FOUND : nat)
+        | Some r -> r in 
+    let rate_out = 
+        match Big_map.find_opt p.token_out storage.directory with 
+        | None -> (failwith error_TOKEN_NOT_FOUND : nat)
+        | Some r -> r in 
+    let qty_for_trade = 
+        p.qty * rate_in / rate_out in 
+    // check qty is sufficient 
+    if qty_for_trade < p.min_out then (failwith error_INSUFFICIENT_FUNDS : result) else 
+    // transfer tokens in 
+    let op_burn_incoming = 
+        let txn_data = 
+            [ { owner = Tezos.sender ; token_id = p.token_in.token_id ; amount = p.qty } ; ] in 
+        match (Tezos.get_entrypoint_opt "%burn" p.token_in.token_addr : mintburn contract option) with
+        | None -> (failwith error_CONTRACT_NOT_FOUND : operation)
+        | Some token_entrypoint -> 
+            Tezos.transaction txn_data 0mutez token_entrypoint in 
+    // mint outgoing 
+    let op_mint_outgoing = 
+        let txn_data = 
+            [ { owner = Tezos.sender ; token_id = p.token_out.token_id ; amount = qty_for_trade } ; ] in 
+        match (Tezos.get_entrypoint_opt "%mint" p.token_out.token_addr : mintburn contract option) with
+        | None -> (failwith error_CONTRACT_NOT_FOUND : operation)
+        | Some token_entrypoint -> 
+            Tezos.transaction txn_data 0mutez token_entrypoint in
+    // new exchange rates
+    let directory = 
+        let token_in_rate = 
+            let r = rate_in - (storage.increment * p.qty / 1_000_000n) in // the token being sold gets cheaper
+            if r <= storage.min_rate then abs(storage.min_rate) else abs(r) in 
+        let token_out_rate = rate_out + (storage.increment * qty_for_trade / 1_000_000n) in // the token being bought gets more expensive
+        Big_map.update p.token_in (Some token_in_rate) (
+            Big_map.update p.token_out (Some token_out_rate) storage.directory ) in 
+    // emit operations
+    [ op_burn_incoming ; op_mint_outgoing ; ], 
+    { storage with directory = directory ; }
+#endif
 
 (* =============================================================================
  * Contract Views
@@ -195,5 +253,8 @@ let main (param, storage : entrypoint * storage) : result =
     | Pool p -> pool p storage
     | Unpool p -> unpool p storage
     | Trade p -> trade p storage
+#if SYNTHETIC_TRADES
+    | SyntheticTrade p -> synthetic_trade p storage
+#endif
 
 
