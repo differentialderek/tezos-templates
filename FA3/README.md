@@ -11,8 +11,7 @@ To do this the contract keeps an internal exchange rate so that the tokens in th
 There are two versions of the FA3 contracts here: `FA3.mligo` and `FA3_2.mligo`
 
 `FA3.mligo`: 
-This token contract allows users to pool their tokens. The pooled tokens provide liquidity for exchanges. Once a user pools their tokens, they receive *pool tokens* in exchange, where the quantity is given by the internal exchange rate. This can be useful to pool together tokens in a semi-fungible family to, for example, get more liquidity on-chain.
-- Variations on this standard could be only allowing users to pool and unpool (no trading), or updating relative prices to reflect demand (see "Future work")
+This token contract allows users to pool their tokens. The pooled tokens provide liquidity for exchanges. Once a user pools their tokens, they receive *pool tokens* in exchange, where the quantity is given by the internal exchange rate. This can be useful to pool together tokens in a semi-fungible family to, for example, get more liquidity on-chain. Variations on this standard could be only allowing users to pool and unpool (no trading), or updating relative prices to reflect demand, like in the RPMM contract.
 
 `FA3_2.mligo`: 
 This token contract allows users to burn their tokens in exchange for tokens in the same semi-fungible family, but of different types. The idea is that these are all roughly equivalent, and it doesn't matter which you hold, since they all have a fixed value relative to each other. It might still be useful to have a designated "pool token" for similar reasons above like in order to get high liquidity on-chain. This may not be suitable for some use cases, depending on the minting conditions of each token in the semi-fungible family.
