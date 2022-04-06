@@ -17,7 +17,8 @@ This token contract allows users to pool their tokens. The pooled tokens provide
 `FA3_2.mligo`: 
 This token contract allows users to burn their tokens in exchange for tokens in the same semi-fungible family, but of different types. The idea is that these are all roughly equivalent, and it doesn't matter which you hold, since they all have a fixed value relative to each other. It might still be useful to have a designated "pool token" for similar reasons above like in order to get high liquidity on-chain. This may not be suitable for some use cases, depending on the minting conditions of each token in the semi-fungible family.
 
-## Future work
+## The RPMM Contract
+The Relative Price Market Maker (RPMM) contract takes the pooling/trading functionality and makes it into a separate contract. This is for when the pooled, semi-fungible family is managed by multiple smart contracts, rather than a single multi-token smart contract. This features incremental changes in relative price based on trading activity, where a token's relative price goes down when it's sold (down to a minimum exchange rate defined in storage), and up when it's bought. It also has an unpool fee so that trades aren't done through pooling/unpooling to avoid price slippage. Finally, it has functionality for "synthetic trades": if the pool does not have any of a given token type, the RPMM contract will burn the incoming tokens of a trade and mint the outgoing tokens to complete the trade. This way, the relative value of the pool stays (roughly) constant; it just reconstitutes the tokens *in* the pool based on the exchange rate. Note that for synthetic trading to be implemented, the RPMM contract has to have minting/burning permissions in each of the tokens of the pooled, semi-fungible family.
 
-- An update to this will come so that the internal exchange rate can change over time to meet supply/demand
-- These are just implementations, so an actual standard would have to be written 
+## Future Work
+These are implementations of a potential token standard; the actual standard still needs to be written.
