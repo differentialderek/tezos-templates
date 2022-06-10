@@ -41,7 +41,6 @@ type storage = {
     operators : (operator, nat) big_map;
     
     // for pooling
-    pool_token_id : nat ; // default is zero
     exchange_rates : (nat, nat) big_map ; // maps token IDs to their exchange rate, divided by 1_000
 
     // token metadata for each token type supported by this contract
@@ -96,7 +95,7 @@ type entrypoint =
 | Add_token_id of add_token_id list 
 | Update_contract_metadata of contract_metadata
 // pooling functionality
-| TradeInPool of trade_in_pool
+| Trade_in_pool of trade_in_pool
 
 
 (* =============================================================================
@@ -235,7 +234,6 @@ let rec mint_tokens (param, storage : mint * storage) : result =
     | hd :: tl -> 
         let storage = {storage with ledger = 
             let (owner, token_id, qty) = (hd.owner, hd.token_id, hd.qty) in 
-            if token_id = storage.pool_token_id then (failwith error_PERMISSIONS_DENIED : (owner , qty) big_map) else
             // update owner balance
             let owner_balance = 
                 match Big_map.find_opt {token_owner = owner; token_id = token_id ;} storage.ledger with
@@ -255,7 +253,6 @@ let rec burn_tokens (param, storage : burn * storage) : result =
     | hd :: tl -> 
         let storage = {storage with ledger = 
             let (owner, token_id, qty) = (hd.owner, hd.token_id, hd.qty) in 
-            if token_id = storage.pool_token_id then (failwith error_PERMISSIONS_DENIED : (owner , qty) big_map) else
             // update owner balance
             let owner_balance = 
                 match Big_map.find_opt {token_owner = owner; token_id = token_id ;} storage.ledger with
@@ -322,7 +319,7 @@ let trade_in_pool (param : trade_in_pool) (storage : storage) : result =
         | None -> (failwith error_FA2_TOKEN_UNDEFINED : nat)
         | Some rate -> rate in 
     let rate_out = 
-        match Big_map.find_opt token_in storage.exchange_rates with 
+        match Big_map.find_opt token_out storage.exchange_rates with 
         | None -> (failwith error_FA2_TOKEN_UNDEFINED : nat)
         | Some rate -> rate in 
     // burn 
@@ -342,9 +339,9 @@ let trade_in_pool (param : trade_in_pool) (storage : storage) : result =
         | None -> (failwith error_FA2_SENDER_HOOK_FAILED : operation)
         | Some entrypt -> (
             let txn_data = {
-                owner = Tezos.self_address ; 
+                owner = Tezos.sender ; 
                 token_id = token_out ; 
-                qty = qty * rate_in / rate_out ; } in 
+                qty = rate_out * qty / rate_in ; } in  
             Tezos.transaction [ txn_data ; ] 0tez entrypt
         ) in 
     [ op_burn_in ; op_mint_out ; ],
@@ -374,5 +371,5 @@ let main ((entrypoint, storage) : entrypoint * storage) : result =
     | Update_contract_metadata param ->
         update_contract_metadata param storage
     // pooling mechanics 
-    | TradeInPool param -> 
+    | Trade_in_pool param -> 
         trade_in_pool param storage
