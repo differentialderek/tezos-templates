@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "This smart contract is for demonstration purposes only."
+authors:
+  - family-names: Sorensen
+    given-names: Derek
+    orcid: https://orcid.org/0000-0003-4937-6984
+title: "Structured Pools Contract"
+version: 0.0.1
+date-released: 2023-01-21
